@@ -23,13 +23,13 @@ WAVE_MSG_IDS = [
         "channel" : "183",
         "priority" : "3"
     },
-    {
-        "name" : "SPAT",
-        "psid" : "0082",
-        "dsrc_msg_id" : "19",
-        "channel" : "183",
-        "priority" : "3"
-    },
+    # {
+    #     "name" : "SPAT",
+    #     "psid" : "0082",
+    #     "dsrc_msg_id" : "19",
+    #     "channel" : "183",
+    #     "priority" : "3"
+    # },
     {
         "name" : "TIM",
         "psid" : "0083",
@@ -176,8 +176,8 @@ class V2XInterface:
         sock.settimeout(0.5)
         while not self._stop.is_set():
             try:
-                data, address = sock.recvfrom(65535)
-                print(f"from {address[0]}:{address[1]} -> {self.local_port} : {len(data)} bytes")
+                data, _ = sock.recvfrom(65535)
+                # print(f"from {address[0]}:{address[1]} -> {self.local_port} : {len(data)} bytes")
             except socket.timeout:
                 continue
             except Exception as e:
@@ -222,10 +222,10 @@ class V2XInterface:
         for entry in WAVE_MSG_IDS:
             psid_value = int(entry["psid"],16)
             psid_int = str(psid_value)
-            # print(f"Checking if received message is possibly PSID: {msg_id} / {psid_int}")
+            print(f"Checking if received message is possibly PSID: {msg_id} / {psid_int}")
             if msg_id == psid_int :
                 return True
-            
+        print(f"Received message is not a known PSID: {msg_id}")
         return False
 
     def is_valid_msg_size(self, msg_vec: bytes, start_index: int, entry: bytes):
@@ -268,7 +268,7 @@ class V2XInterface:
         @return True if valid BSM identifiers are found, False otherwise.
         """
         if start_index < 0 or start_index >= len(entry)-1 :
-            # print(f"Error: invalid start index {start_index} for data length {len(entry)}")
+            print(f"Error: invalid start index {start_index} for data length {len(entry)}")
             return False
     
         # Valid element id will exist, at max, 5 bytes after a PSID
@@ -279,13 +279,16 @@ class V2XInterface:
             if element_id == 896 :
                 element_id_index = i
                 # Valid DSRCmsgID will exist, at max, 5 bytes after the element id
+                print(f"Found valid element id 896 at index {element_id_index}, checking for DSRCmsgID 20...")
                 for j in range(element_id_index, min(element_id_index + 6, len(entry) - 1)):
                     # Generate a 16-bit message id from two bytes, e.g. [0x00, 0x14] = 0x0014
                     possible_msg_id = (int(entry[j]) << 8) | int(entry[j + 1])
 
                     # Check if BSM DSRCmsgID 20 (0x0014)
                     if possible_msg_id == 20:
+                        print(f"Found valid DSRCmsgID 20 at index {j}, message is valid BSM.")
                         return True
+        print("No valid DSRCmsgID 20 found after element id 896, message is not valid BSM.")
         return False
 
     def onV2XMessageReceived(self, data: bytes) -> None:
@@ -297,12 +300,14 @@ class V2XInterface:
         if not data or len(data) < 3 :
             # print(f"Received empty or invalid packet: len={len(data)} bytes")
             return
+        valid_msg_done = False
         
         if self.check_validity :
             for i in range(len(data)-3) :
                 msg_id = (data[i] << 8) | data[i+1]
                 msg_info = self.is_valid_msg_id(msg_id)
                 if msg_info is None:
+                    # print(f"discarding received message with unknown DSRCmsgID: {msg_id}")
                     continue
                 if ((i + self.short_frame_) >= len(data)) :
                     # print("discarding received message with insufficient data for short frame header.")
@@ -315,20 +320,18 @@ class V2XInterface:
                     break; # Break if message length exceeds max allowed
 
                 if self.is_valid_msg_size(msg_vec, start_index, data) == False:
-                    # print("discarding received message with invalid size field.")
+                    # print(f"discarding received message with invalid size field: {msg_id}")
                     continue
                 
-                should_process = (not self.is_possible_psid(str(msg_id))) or (not self.is_valid_msg_assuming_bsm_psid(start_index, data))
-                if should_process :
-                    if self.callback:
-                        self.callback(data, msg_id)
+                if self.callback:
+                    self.callback(data, msg_id)
+                    valid_msg_done = True
                     break
-                else :
-                    continue
-        else :
-            msg_id = (data[0] << 8) | data[1]
+
+        if not valid_msg_done :
+            # User callback should take care of any further validation if desired, but we will still call it with the raw data and None for msg_id.
             if self.callback:
-                self.callback(data, msg_id)
+                self.callback(data, None)
 
     def to_hex_string(self, data) -> str:
         """!
