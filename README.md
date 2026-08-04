@@ -11,7 +11,7 @@ This repository provides a Python UDP-based V2X interface and example programs f
 - `src/v2xintf.py`: Core V2X interface implementation.
 - `src/v2xintf_ex.py`: Basic example app (console mode, with optional PyQt6 demo UI).
 - `src/v2xintf_ex_bsm.py`: BSM-focused example using ASN.1 tooling.
-- `J2735SET_202409/`: ASN.1 module collection.
+- `src/J2735SET_202409/`: ASN.1 module collection.
 
 ## Prerequisites
 

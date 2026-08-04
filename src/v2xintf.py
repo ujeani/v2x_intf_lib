@@ -188,6 +188,18 @@ class V2XInterface:
 
         sock.close()
 
+    def find_msg_info_by_name(self, name: str):
+        """!
+        @brief Looks up a WAVE_MSG_IDS entry by its message type name.
+
+        @param name The message type name (e.g., 'BSM', 'SensorDataSharingMessage').
+        @return Dictionary containing message info if found, otherwise None.
+        """
+        for entry in WAVE_MSG_IDS:
+            if entry["name"] == name:
+                return entry
+        return None
+
     def is_valid_msg_id(self, msg_id: int):
         """!
         @brief Checks if a given message ID exists in the known WAVE_MSG_IDS list.
@@ -335,24 +347,25 @@ class V2XInterface:
         @param message_type The string name of the message type (e.g., 'BSM', 'MAP').
         @return The UTF-8 encoded byte array of the formatted text envelope.
         """
-        if not data or len(data) < 3 :
-            # print(f"Send empty or invalid packet: len={len(data)} bytes")
-            return
-        msg_id = (data[0] << 8) | data[1]
-        msg_info = self.is_valid_msg_id(msg_id)
-        # print(f"Attempting to send message with ID {msg_id} ({msg_info['name'] if msg_info else 'Unknown'})")
-        
-        ifm_dsrc_msg_id = str(msg_id)
-        ifm_msg_name = message_type
-        ifm_channel = "CCH"
-        ifm_priority = "1"
-        ifm_psid = ifm_dsrc_msg_id
+        if not data :
+            raise ValueError("pack_message requires non-empty data")
+
+        msg_info = self.find_msg_info_by_name(message_type)
 
         if msg_info :
             ifm_msg_name = msg_info['name']
             ifm_channel = msg_info['channel']
             ifm_priority = msg_info['priority']
             ifm_psid = msg_info['psid']
+        else :
+            if len(data) < 2 :
+                raise ValueError(f"pack_message requires at least 2 bytes of data to infer an unknown message ID, got {len(data)}")
+            msg_id = (data[0] << 8) | data[1]
+            # print(f"No WAVE config entry for type: {message_type}, using defaults for ID {msg_id}")
+            ifm_msg_name = message_type
+            ifm_channel = "CCH"
+            ifm_priority = "1"
+            ifm_psid = str(msg_id)
 
         lines = [
             "Version=0.7",
@@ -378,14 +391,12 @@ class V2XInterface:
         @param data The raw DSRC payload to send.
         @param message_type The string identifying the message type.
         """
-        packed_message = self.pack_message(data, message_type)
-        # print(f"Packed message for sending:\n{packed_message}")
-        # Send the packed message to the remote address and port using a UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
+            packed_message = self.pack_message(data, message_type)
             # print(f"Send message to {self.remote_address}:{self.remote_port}")
             sock.sendto(packed_message, (self.remote_address, self.remote_port))
-        except Exception as e:
+        except (ValueError, OSError) as e:
             print(f"Error sending message: {e}")
         finally:
             sock.close()
