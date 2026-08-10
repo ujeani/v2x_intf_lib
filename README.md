@@ -44,7 +44,7 @@ pip install PyQt6
 2. Set the OBU/RSU IP address (see the device's "Changing IP address" instructions).
 3. Modify `forwardip` and `forwardport` in `forward.cfg`.
    - The Python application that receives the message from the OBU or RSU must be running on the computer whose IP address is `forwardip` at port `forwardport`.
-   - `forwardip`/`forwardport` is the direction the OBU/RSU forwards messages *to* this app, so `forwardport` must match the app's `--local-port` (default `5398`, see [Usage](#usage)) — or `--gps-port` (default `5999`) if the device forwards GPS packets. This is separate from `--remote-address`/`--remote-port` (default `127.0.0.1:1516`), which is the opposite direction: where this app sends messages *to* the device via `sendV2XMessage`.
+   - `forwardip`/`forwardport` is the direction the OBU/RSU forwards messages *to* this app, so `forwardport` must match the app's `--local-port` (default `5398`, see [Usage](#usage)). This is separate from `--remote-address`/`--remote-port` (default `127.0.0.1:1516`), which is the opposite direction: where this app sends messages *to* the device via `sendV2XMessage`.
 
 ## Using the Library in Your Application
 
