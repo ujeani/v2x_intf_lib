@@ -23,13 +23,13 @@ WAVE_MSG_IDS = [
         "channel" : "183",
         "priority" : "3"
     },
-    # {
-    #     "name" : "SPAT",
-    #     "psid" : "0082",
-    #     "dsrc_msg_id" : "19",
-    #     "channel" : "183",
-    #     "priority" : "3"
-    # },
+    {
+        "name" : "SPAT",
+        "psid" : "0082",
+        "dsrc_msg_id" : "19",
+        "channel" : "183",
+        "priority" : "3"
+    },
     {
         "name" : "TIM",
         "psid" : "0083",
@@ -109,6 +109,16 @@ WAVE_MSG_IDS = [
     }
 ]
 
+
+ITT_CUSTOM_MSG_IDS = [
+    {
+        "name" : "ITTCustomMessage",
+        "psid" : "016792",
+        "dsrc_msg_id" : "254",
+        "channel" : "183",
+        "priority" : "6"
+    }
+]
 class V2XInterface:
     """!
     @brief Interface for managing V2X message transmission and reception over UDP.
@@ -212,6 +222,19 @@ class V2XInterface:
                 return entry
         return None
 
+
+    def is_custom_msg_id(self, msg_id: int):
+        """!
+        @brief Checks if a given message ID corresponds to the ITTCustomMessage.
+        
+        @param msg_id The DSRC message ID as an integer.
+        @return Dictionary containing message info if it's a custom message, otherwise None.
+        """
+        for entry in ITT_CUSTOM_MSG_IDS:
+            if int(entry["dsrc_msg_id"]) == msg_id:
+                return entry
+        return None
+
     def is_possible_psid(self, msg_id: str) -> bool:
         """!
         @brief Checks if a given Provider Service Identifier (PSID) is known.
@@ -222,10 +245,10 @@ class V2XInterface:
         for entry in WAVE_MSG_IDS:
             psid_value = int(entry["psid"],16)
             psid_int = str(psid_value)
-            print(f"Checking if received message is possibly PSID: {msg_id} / {psid_int}")
+            # print(f"Checking if received message is possibly PSID: {msg_id} / {psid_int}")
             if msg_id == psid_int :
                 return True
-        print(f"Received message is not a known PSID: {msg_id}")
+        # print(f"Received message is not a known PSID: {msg_id}")
         return False
 
     def is_valid_msg_size(self, msg_vec: bytes, start_index: int, entry: bytes):
@@ -301,14 +324,28 @@ class V2XInterface:
             # print(f"Received empty or invalid packet: len={len(data)} bytes")
             return
         valid_msg_done = False
-        
+
+        # Display received message in hex for debugging
+        # print(f"Received packet: {len(data)} bytes, data (hex): {' '.join(f'{b:02x}' for b in data)}")
+
+        # Check for ITTCustomMessage first, as it has a unique msg_id.
+        # Check only the first two bytes for msg_id, as ITTCustomMessage is expected to be at the start of the packet
+        msg_id = (data[0] << 8) | data[1]        
+        msg_info = self.is_custom_msg_id(msg_id)
+        if msg_info is not None:
+            # print(f"Received ITTCustomMessage with DSRCmsgID: {msg_id} ({msg_info['name']})")
+            if self.callback:
+                self.callback(data, msg_id)
+            return
+
         if self.check_validity :
-            for i in range(len(data)-3) :
+            for i in range(len(data)-3) :            
                 msg_id = (data[i] << 8) | data[i+1]
                 msg_info = self.is_valid_msg_id(msg_id)
                 if msg_info is None:
                     # print(f"discarding received message with unknown DSRCmsgID: {msg_id}")
                     continue
+                # print(f"Received message with DSRCmsgID: {msg_id} ({msg_info['name']})")
                 if ((i + self.short_frame_) >= len(data)) :
                     # print("discarding received message with insufficient data for short frame header.")
                     break; # Break if not enough data remaining
@@ -328,11 +365,8 @@ class V2XInterface:
                     valid_msg_done = True
                     break
 
-        if not valid_msg_done :
-            # User callback should take care of any further validation if desired, but we will still call it with the raw data and None for msg_id.
-            if self.callback:
-                self.callback(data, None)
-
+        return
+    
     def to_hex_string(self, data) -> str:
         """!
         @brief Converts a byte array to a continuous hexadecimal string.
@@ -375,7 +409,7 @@ class V2XInterface:
             f"Type={ifm_msg_name}",
             f"PSID={ifm_psid}",
             f"Priority={ifm_priority}",
-            "TxMode=ALT",
+            "TxMode=CONT",
             f"TxChannel={ifm_channel}",
             "TxInterval=0",
             "DeliveryStart=",
