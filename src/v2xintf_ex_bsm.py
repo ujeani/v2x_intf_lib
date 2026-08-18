@@ -73,15 +73,13 @@ def test_callback(data: bytes, msg_id: int):
                 
     print(f"Received packet: {len(data)} bytes, {msg_name} (Message ID: {msg_id}).")
     mf = j2735_spec.decode("MessageFrame", data)
-    if msg_id == 20:  # BSM
+    if msg_id is None :
+        print("(Non-SAE message, cannot decode)")
+    elif msg_id == 20:  # BSM
         bsm = j2735_spec.decode("BasicSafetyMessage", mf["value"])
         formatted_bsm = _normalize_for_print(bsm)
         print(_format_bsm_summary(bsm))
         print(f"Decoded BasicSafetyMessage:\n{pformat(formatted_bsm, width=120, sort_dicts=False)}\n")
-
-        # TODO : Use bsm values to extract and print the vehicle's BSM 
-            
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="V2XInterface Example")

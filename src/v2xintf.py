@@ -109,6 +109,16 @@ WAVE_MSG_IDS = [
     }
 ]
 
+
+ITT_CUSTOM_MSG_IDS = [
+    {
+        "name" : "ITTCustomMessage",
+        "psid" : "016792",
+        "dsrc_msg_id" : "254",
+        "channel" : "183",
+        "priority" : "6"
+    }
+]
 class V2XInterface:
     """!
     @brief Interface for managing V2X message transmission and reception over UDP.
@@ -176,8 +186,8 @@ class V2XInterface:
         sock.settimeout(0.5)
         while not self._stop.is_set():
             try:
-                data, address = sock.recvfrom(65535)
-                print(f"from {address[0]}:{address[1]} -> {self.local_port} : {len(data)} bytes")
+                data, _ = sock.recvfrom(65535)
+                # print(f"from {address[0]}:{address[1]} -> {self.local_port} : {len(data)} bytes")
             except socket.timeout:
                 continue
             except Exception as e:
@@ -188,6 +198,18 @@ class V2XInterface:
 
         sock.close()
 
+    def find_msg_info_by_name(self, name: str):
+        """!
+        @brief Looks up a WAVE_MSG_IDS entry by its message type name.
+
+        @param name The message type name (e.g., 'BSM', 'SensorDataSharingMessage').
+        @return Dictionary containing message info if found, otherwise None.
+        """
+        for entry in WAVE_MSG_IDS:
+            if entry["name"] == name:
+                return entry
+        return None
+
     def is_valid_msg_id(self, msg_id: int):
         """!
         @brief Checks if a given message ID exists in the known WAVE_MSG_IDS list.
@@ -196,6 +218,19 @@ class V2XInterface:
         @return Dictionary containing message info if valid, otherwise None.
         """
         for entry in WAVE_MSG_IDS:
+            if int(entry["dsrc_msg_id"]) == msg_id:
+                return entry
+        return None
+
+
+    def is_custom_msg_id(self, msg_id: int):
+        """!
+        @brief Checks if a given message ID corresponds to the ITTCustomMessage.
+        
+        @param msg_id The DSRC message ID as an integer.
+        @return Dictionary containing message info if it's a custom message, otherwise None.
+        """
+        for entry in ITT_CUSTOM_MSG_IDS:
             if int(entry["dsrc_msg_id"]) == msg_id:
                 return entry
         return None
@@ -213,7 +248,7 @@ class V2XInterface:
             # print(f"Checking if received message is possibly PSID: {msg_id} / {psid_int}")
             if msg_id == psid_int :
                 return True
-            
+        # print(f"Received message is not a known PSID: {msg_id}")
         return False
 
     def is_valid_msg_size(self, msg_vec: bytes, start_index: int, entry: bytes):
@@ -256,7 +291,7 @@ class V2XInterface:
         @return True if valid BSM identifiers are found, False otherwise.
         """
         if start_index < 0 or start_index >= len(entry)-1 :
-            # print(f"Error: invalid start index {start_index} for data length {len(entry)}")
+            print(f"Error: invalid start index {start_index} for data length {len(entry)}")
             return False
     
         # Valid element id will exist, at max, 5 bytes after a PSID
@@ -267,13 +302,16 @@ class V2XInterface:
             if element_id == 896 :
                 element_id_index = i
                 # Valid DSRCmsgID will exist, at max, 5 bytes after the element id
+                print(f"Found valid element id 896 at index {element_id_index}, checking for DSRCmsgID 20...")
                 for j in range(element_id_index, min(element_id_index + 6, len(entry) - 1)):
                     # Generate a 16-bit message id from two bytes, e.g. [0x00, 0x14] = 0x0014
                     possible_msg_id = (int(entry[j]) << 8) | int(entry[j + 1])
 
                     # Check if BSM DSRCmsgID 20 (0x0014)
                     if possible_msg_id == 20:
+                        print(f"Found valid DSRCmsgID 20 at index {j}, message is valid BSM.")
                         return True
+        print("No valid DSRCmsgID 20 found after element id 896, message is not valid BSM.")
         return False
 
     def onV2XMessageReceived(self, data: bytes) -> None:
@@ -285,13 +323,29 @@ class V2XInterface:
         if not data or len(data) < 3 :
             # print(f"Received empty or invalid packet: len={len(data)} bytes")
             return
-        
+        valid_msg_done = False
+
+        # Display received message in hex for debugging
+        # print(f"Received packet: {len(data)} bytes, data (hex): {' '.join(f'{b:02x}' for b in data)}")
+
+        # Check for ITTCustomMessage first, as it has a unique msg_id.
+        # Check only the first two bytes for msg_id, as ITTCustomMessage is expected to be at the start of the packet
+        msg_id = (data[0] << 8) | data[1]        
+        msg_info = self.is_custom_msg_id(msg_id)
+        if msg_info is not None:
+            # print(f"Received ITTCustomMessage with DSRCmsgID: {msg_id} ({msg_info['name']})")
+            if self.callback:
+                self.callback(data, msg_id)
+            return
+
         if self.check_validity :
-            for i in range(len(data)-3) :
+            for i in range(len(data)-3) :            
                 msg_id = (data[i] << 8) | data[i+1]
                 msg_info = self.is_valid_msg_id(msg_id)
                 if msg_info is None:
+                    # print(f"discarding received message with unknown DSRCmsgID: {msg_id}")
                     continue
+                # print(f"Received message with DSRCmsgID: {msg_id} ({msg_info['name']})")
                 if ((i + self.short_frame_) >= len(data)) :
                     # print("discarding received message with insufficient data for short frame header.")
                     break; # Break if not enough data remaining
@@ -303,21 +357,16 @@ class V2XInterface:
                     break; # Break if message length exceeds max allowed
 
                 if self.is_valid_msg_size(msg_vec, start_index, data) == False:
-                    # print("discarding received message with invalid size field.")
+                    # print(f"discarding received message with invalid size field: {msg_id}")
                     continue
                 
-                should_process = (not self.is_possible_psid(str(msg_id))) or (not self.is_valid_msg_assuming_bsm_psid(start_index, data))
-                if should_process :
-                    if self.callback:
-                        self.callback(data, msg_id)
+                if self.callback:
+                    self.callback(data, msg_id)
+                    valid_msg_done = True
                     break
-                else :
-                    continue
-        else :
-            msg_id = (data[0] << 8) | data[1]
-            if self.callback:
-                self.callback(data, msg_id)
 
+        return
+    
     def to_hex_string(self, data) -> str:
         """!
         @brief Converts a byte array to a continuous hexadecimal string.
@@ -335,31 +384,32 @@ class V2XInterface:
         @param message_type The string name of the message type (e.g., 'BSM', 'MAP').
         @return The UTF-8 encoded byte array of the formatted text envelope.
         """
-        if not data or len(data) < 3 :
-            # print(f"Send empty or invalid packet: len={len(data)} bytes")
-            return
-        msg_id = (data[0] << 8) | data[1]
-        msg_info = self.is_valid_msg_id(msg_id)
-        # print(f"Attempting to send message with ID {msg_id} ({msg_info['name'] if msg_info else 'Unknown'})")
-        
-        ifm_dsrc_msg_id = str(msg_id)
-        ifm_msg_name = message_type
-        ifm_channel = "CCH"
-        ifm_priority = "1"
-        ifm_psid = ifm_dsrc_msg_id
+        if not data :
+            raise ValueError("pack_message requires non-empty data")
+
+        msg_info = self.find_msg_info_by_name(message_type)
 
         if msg_info :
             ifm_msg_name = msg_info['name']
             ifm_channel = msg_info['channel']
             ifm_priority = msg_info['priority']
             ifm_psid = msg_info['psid']
+        else :
+            if len(data) < 2 :
+                raise ValueError(f"pack_message requires at least 2 bytes of data to infer an unknown message ID, got {len(data)}")
+            msg_id = (data[0] << 8) | data[1]
+            # print(f"No WAVE config entry for type: {message_type}, using defaults for ID {msg_id}")
+            ifm_msg_name = message_type
+            ifm_channel = "CCH"
+            ifm_priority = "1"
+            ifm_psid = str(msg_id)
 
         lines = [
             "Version=0.7",
             f"Type={ifm_msg_name}",
             f"PSID={ifm_psid}",
             f"Priority={ifm_priority}",
-            "TxMode=ALT",
+            "TxMode=CONT",
             f"TxChannel={ifm_channel}",
             "TxInterval=0",
             "DeliveryStart=",
@@ -378,14 +428,12 @@ class V2XInterface:
         @param data The raw DSRC payload to send.
         @param message_type The string identifying the message type.
         """
-        packed_message = self.pack_message(data, message_type)
-        # print(f"Packed message for sending:\n{packed_message}")
-        # Send the packed message to the remote address and port using a UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
+            packed_message = self.pack_message(data, message_type)
             # print(f"Send message to {self.remote_address}:{self.remote_port}")
             sock.sendto(packed_message, (self.remote_address, self.remote_port))
-        except Exception as e:
+        except (ValueError, OSError) as e:
             print(f"Error sending message: {e}")
         finally:
             sock.close()
